@@ -6,118 +6,81 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
+
+import java.lang.reflect.Field;
+
 public class hackvip implements IXposedHookLoadPackage {
 
-    private static final String TARGET_PACKAGE_NAME = "com.yshb.kalinba";
+    // 目标包名
+    private static final String TARGET_PACKAGE = "pet.morning.linkey";
 
     @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        if (!TARGET_PACKAGE_NAME.equals(lpparam.packageName)) {
+    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
+        // 1. 过滤目标应用
+        if (!lpparam.packageName.equals(TARGET_PACKAGE)) {
             return;
         }
 
-        // 禁止10分钟弹窗 直接mock网络请求返回值，使得永远判断都是会员
+        XposedBridge.log("=== 灵犀智控破解模块已加载 ===");
+
+        // 2. 核心策略：Hook KeyService 的 onCreate
+        hookKeyService(lpparam);
+        
+        // 3. 辅助策略：监控日志以辅助调试（可选）
+        hookLogcat(lpparam);
+    }
+
+    private void hookKeyService(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
+            // 这里的类名必须完全匹配
             XposedHelpers.findAndHookMethod(
-                    "com.yshb.kalinba.http.MYEnpcryptionRetrofitWrapper",
-                    lpparam.classLoader,
-                    "getMemberInfo",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            super.beforeHookedMethod(param);
-
-                            XposedBridge.log("Xposed: Intercepted MYEnpcryptionRetrofitWrapper.getMemberInfo() call.");
-
-                            // 创建一个模拟的 UserMemberInfo 对象
-                            Class<?> userMemberInfoClass = XposedHelpers.findClass("com.yshb.kalinba.bean.UserMemberInfo", lpparam.classLoader);
-
-                            // 创建实例
-                            Object mockUserMemberInfo = userMemberInfoClass.newInstance();
-
-                            // 设置 memberTag 为非空字符串，模拟会员状态，如果是空会进入好几个条件的判断。
-                            XposedHelpers.setObjectField(mockUserMemberInfo, "memberTag", "MockVipTag");
-
-                            // 阻止原始方法执行，并直接返回模拟的对象
-                            // 注意：getMemberInfo 返回的是 Observable<UserMemberInfo>
-                            // 我们需要返回一个 Observable，它能立即发出我们模拟的数据
-                            // 需要找到 RxJava 的 Observable 类
-                            Class<?> observableClass = XposedHelpers.findClass("io.reactivex.Observable", lpparam.classLoader);
-                            Class<?> observableJustMethod = observableClass; // The 'just' method is static on Observable class
-
-                            // 使用反射调用 Observable.just(mockUserMemberInfo) 来创建一个 Observable
-                            Object mockObservable = XposedHelpers.callStaticMethod(observableClass, "just", mockUserMemberInfo);
-
-                            // 将模拟的 Observable 作为结果返回，替换原始的网络请求 Observable
-                            param.setResult(mockObservable);
-
-                            XposedBridge.log("Xposed: 模拟数据已插入成功");
+                "pet.morning.linkey.KeyService", 
+                lpparam.classLoader,
+                "onCreate",
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        XposedBridge.log("检测到 KeyService 启动，正在尝试移除校验...");
+                        
+                        Object serviceInstance = param.thisObject;
+                        
+                        // 尝试清空 f2350c 字段 (协程作用域)
+                        try {
+                            Field scopeField = serviceInstance.getClass().getDeclaredField("f2350c");
+                            scopeField.setAccessible(true);
+                            scopeField.set(serviceInstance, null); // 设为 null 强制中断协程
+                            XposedBridge.log("成功禁用 f2350c，后台校验可能已停止。");
+                        } catch (NoSuchFieldException e) {
+                            XposedBridge.log("字段 f2350c 未找到，请检查混淆映射。");
                         }
                     }
-            );
-
-        } catch (Exception e) {
-            XposedBridge.log("Xposed: 错误信息: " + e.getMessage());
-            e.printStackTrace();
-        }
-
-
-        // 未登录时的试用时长解除
-        try {
-            // Hook UserDataCacheManager 的 isReward 方法，确保返回 true
-            XposedHelpers.findAndHookMethod(
-                    "com.yshb.kalinba.common.UserDataCacheManager",
-                    lpparam.classLoader,
-                    "isReward",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            super.beforeHookedMethod(param);
-                            XposedBridge.log("Xposed: Hooked UserDataCacheManager成功");
-                            param.setResult(true);
-                        }
-                    }
-            );
-
-
-            // 使其返回值 <= 1800，从而不满足 MainActivity.onResume 中未登录弹窗的条件
-            XposedHelpers.findAndHookMethod(
-                    "com.yshb.kalinba.common.UserDataCacheManager",
-                    lpparam.classLoader,
-                    "getTodayPlayTime",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            super.beforeHookedMethod(param);
-                            XposedBridge.log("Xposed: Hooked UserDataCacheManager.getTodayPlayTime成功");
-                            param.setResult(1);
-                        }
-                    }
-            );
-
-        } catch (Exception e) {
-            XposedBridge.log("Xposed: Error: " + e.getMessage());
-            e.printStackTrace();
-        }
-        // 去广告（这部分没测试）
-        try {
-            XposedHelpers.findAndHookMethod(
-                    "com.yshb.kalinba.act.MainActivity",
-                    lpparam.classLoader,
-                    "showAd",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            super.beforeHookedMethod(param);
-                            XposedBridge.log("Xposed: 广告已阻止");
-                            param.setResult(null);
-                        }
-                    }
+                }
             );
         } catch (Exception e) {
-            XposedBridge.log("Xposed: Error: " + e.getMessage());
-            e.printStackTrace();
+            XposedBridge.log("Hook KeyService 失败: " + e.getMessage());
         }
+    }
 
+    private void hookLogcat(XC_LoadPackage.LoadPackageParam lpparam) {
+        // 这是一个调试手段，用于确认校验逻辑是否真的被触发了
+        try {
+            XposedHelpers.findAndHookMethod(
+                "android.util.Log",
+                lpparam.classLoader,
+                "d",
+                String.class, String.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        String tag = (String) param.args[0];
+                        String msg = (String) param.args[1];
+                        
+                        if ("SmartKeyService".equals(tag) && msg != null && msg.contains("VIP")) {
+                            XposedBridge.log("⚠️ 警告：检测到 VIP 校验日志输出，说明校验逻辑仍在运行！");
+                        }
+                    }
+                }
+            );
+        } catch (Exception ignored) {}
     }
 }
