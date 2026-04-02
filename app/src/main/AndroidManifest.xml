@@ -21,8 +21,8 @@
             android:name="xposedminversion"
             android:value="89"/>
         <meta-data
-            android:name="xposedscope"
-            android:resource="@array/scope"/>
+            android:name="xposedhooker"
+            android:value="com.example.smartkeybypass.MainHook" /
 
     </application>
 </manifest>
